@@ -1,0 +1,8 @@
+- name: Nagios Installation
+  hosts: nagios
+  user: nando
+  become: yes
+  connection: ssh
+  gather_facts: yes
+  roles:
+    - nagios

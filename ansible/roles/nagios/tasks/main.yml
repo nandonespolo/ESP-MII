@@ -1,0 +1,290 @@
+- name: Set timezone to Europe/London
+  timezone:
+    name: Europe/London
+  tags:
+    - nagios
+
+- name: Install required packages
+  apt: name={{ item }} state=latest update_cache=yes
+  with_items:
+    - daemon
+    - build-essential
+    - apache2
+    - php5-gd
+    - libgd2-xpm-dev
+    - libapache2-mod-php5
+    - apache2-utils
+    - systemd
+    - openssl
+    - libssl-dev
+    - unzip
+    - python-passlib
+    - curl
+    - lynx
+  tags:
+    - nagios
+
+- name: Curl Nagios Core 4.3.4 & Nagios Plugins 2.1.4
+  get_url: url={{ item }} dest=/tmp
+  with_items:
+    - https://assets.nagios.com/downloads/nagioscore/releases/nagios-4.3.4.tar.gz
+    - https://nagios-plugins.org/download/nagios-plugins-2.1.4.tar.gz  
+  tags:
+    - nagios
+
+- name: Extract Nagios files
+  unarchive: src={{ item }} dest=/tmp remote_src=yes
+  with_items:
+    - /tmp/nagios-4.3.4.tar.gz
+    - /tmp/nagios-plugins-2.1.4.tar.gz
+  tags:
+    - nagios
+
+- name: Delete tar files
+  file: path={{ item }} state=absent
+  with_items:
+    - /tmp/nagios-4.3.4.tar.gz
+    - /tmp/nagios-plugins-2.1.4.tar.gz
+  tags:
+    - nagios
+
+- name: Create nagcmd group
+  group:
+    name: nagcmd
+    state: present
+  tags:
+    - nagios
+
+- name: Create nagios user and add to nagcmd group
+  user: name={{ item }} create_home=no groups=nagcmd
+  with_items:
+    - nagios
+    - www-data
+  tags:
+    - nagios
+
+- name: Configure Nagios
+  shell: cd /tmp/nagios-4.3.4 && ./configure --with-nagios-group=nagios --with-command-group=nagcmd --with-mail=/usr/bin/mail && yes | make all && make install && make install-init && make install-config && make install-commandmode && /usr/bin/install -c -m 644 sample-config/httpd.conf /etc/apache2/sites-enabled/nagios.conf
+  tags:
+    - nagios
+
+- name: Configure Nagios Plugins
+  shell: cd /tmp/nagios-plugins-2.1.4 && ./configure --with-nagios-user=nagios --with-nagios-group=nagios && make && make install
+  tags:
+    - nagios
+
+- name: Add ServerName to apache.conf
+  lineinfile:
+    path: /etc/apache2/apache2.conf
+    insertbefore: BOF
+    line: "ServerName nagios"  
+  tags:
+    - nagios
+
+- name: Apache cgi and rewrite
+  apache2_module: state=present name={{ item }}
+  with_items: 
+    - cgi
+    - rewrite
+  tags:
+    - nagios
+
+- name: Set password to nagios web access
+  htpasswd: 
+    path: /usr/local/nagios/etc/htpasswd.users
+    name: nagiosadmin
+# password can be passed into a variable in a vault file
+    password: password
+  tags:
+    - nagios
+
+- name: Enable Nagios on Server boot
+  file:
+    src: /etc/init.d/nagios
+    dest: /etc/systemd/system/multi-user.target.wants/nagios.service
+    state: link
+  tags:
+    - nagios
+
+# Remove these restarts
+- name: Restart Apache
+  command: "/etc/init.d/apache2 restart"
+  tags:
+    - nagios
+
+- name: Add NRPE to commands.cfg
+  template:
+    src: templates/commands.cfg.j2
+    dest: /usr/local/nagios/etc/objects/commands.cfg
+    owner: root
+    group: root
+    mode: 0644
+  tags:
+    - nagios
+
+- name: Create Directory Servers
+  file:
+    path: /usr/local/nagios/etc/servers
+    state: directory
+    mode: 0755
+  tags:
+    - nagios
+
+- name: Add Servers folder for Nagios to monitor
+  replace:
+    path: /usr/local/nagios/etc/nagios.cfg
+    regexp: "#cfg_dir=/usr/local/nagios/etc/servers"
+    replace: "cfg_dir=/usr/local/nagios/etc/servers"
+  tags:
+    - nagios
+
+- name: Nagios Client config - linux.cfg
+  template:
+    src: templates/nagios-linux.cfg.j2
+    dest: /usr/local/nagios/etc/servers/linux.cfg
+    owner: root
+    group: root
+    mode: 0644
+  tags:
+    - nagios
+
+- name: Nagios Contacts config - contacts.cfg
+  template:
+    src: templates/nagios-contacts.cfg.j2
+    dest: /usr/local/nagios/etc/objects/contacts.cfg
+    owner: root
+    group: root
+    mode: 0644
+  tags:
+    - nagios
+
+- name: Workaround - Restart Nagios
+  command: /etc/init.d/nagios restart warn=False
+  tags:
+    - nagios
+
+# Postfix ---------------------------------------------------------------------------------------
+- name: Set Postfix option type as internet site
+  debconf: name=postfix question="postfix/main_mailer_type" value="'Internet Site'" vtype="string"
+  tags:
+    - postfix
+
+- name: Install Postfix
+  apt: name={{ item }} state=latest update_cache=yes
+  with_items:
+    - postfix
+    - sasl2-bin
+    - mailutils
+  notify:
+  - Restart Postfix
+  tags:
+    - postfix
+
+- name: Add email and password for Postfix 
+  template: 
+    src: templates/postfix-sasl_passwd.j2 
+    dest: /etc/postfix/sasl_passwd 
+    owner: root
+    group: root
+    mode: 0644
+  tags:
+    - postfix
+
+- name: Add an email address sender
+  template:
+    src: templates/postfix-sender_canonical.j2
+    dest: /etc/postfix/sender_canonical 
+    owner: root
+    group: root
+    mode: 0644
+  tags:
+    - postfix
+
+- name: Postfix postmap hash
+  shell: postmap hash:/etc/postfix/sasl_passwd && postmap hash:/etc/postfix/sender_canonical
+  tags:
+    - postfix
+
+- name: Create mailname
+  shell: echo {{ server_name }} > /etc/mailname
+  tags:
+    - postfix
+
+- name: Change permissions on sasl_passwd.db
+  file: path={{ item }} owner=root group=root mode=0644
+  with_items:
+    - /etc/postfix/sasl_passwd.db
+    - /etc/postfix/sender_canonical.db
+  tags:
+    - postfix
+
+- name: Configure Postfix main.cf
+  template:
+    src: templates/postfix-main.cf.j2
+    dest: /etc/postfix/main.cf
+    owner: root
+    group: root
+    mode: 0644
+  tags:
+    - postfix
+
+# NRPE ---------------------------------------------------------------------------------------
+- name: Install NRPE
+  apt: name={{ item }} state=latest update_cache=yes
+  with_items:
+    - openssl
+    - nagios-nrpe-plugin
+    - nagios-nrpe-server
+    - nagios-plugins
+    - nagios-plugins-basic
+    - nagios-plugins-standard
+  tags: 
+    - nrpe
+
+- name: Configure NRPE file
+  template:
+    src: templates/nagios-plugins-nrpe.cfg.j2
+    dest: /etc/nagios/nrpe.cfg
+    owner: root
+    group: root
+    mode: 0644
+  tags:
+    - nrpe
+
+- name: Add NRPE Memory Check
+  template:
+    src: templates/nagios-plugins-nrpe-check_mem.j2
+    dest: /usr/lib/nagios/plugins/check_mem
+    owner: root
+    group: root
+    mode: 0755
+  tags:
+    - nrpe
+
+- name: Add memory check to localhost-cfg
+  template:
+    src: templates/nagios-localhost.cfg.j2
+    dest: /usr/local/nagios/etc/objects/localhost.cfg
+    owner: nagios
+    group: nagios
+    mode: 0664
+
+- name: Restart Nagios
+  command: /etc/init.d/nagios restart warn=False
+
+- name: Modify nrpe.cfg to allow Nagios to monitor
+  replace:
+    path: /etc/nagios/nrpe.cfg
+    regexp: allowed_hosts=127.0.0.1
+    replace: allowed_hosts=127.0.0.1,{{ nagios_server_ip }}
+  tags:
+    - nrpe
+
+- name: Restart Nrpe
+  command: /etc/init.d/nagios-nrpe-server restart warn=False
+  tags:
+    - nrpe
+
+
+# To do:
+# A lot!!

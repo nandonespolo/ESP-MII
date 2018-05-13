@@ -1,0 +1,63 @@
+define host {
+        use                             linux-server
+        host_name                       Google
+        alias                           Google
+        address                         8.8.8.8
+}
+
+
+define host {
+        use                             linux-server
+        host_name                       Server01
+        alias                           Server01
+        address                         192.168.1.26
+}
+
+define service {
+        use                             generic-service
+        host_name                       Server01
+        service_description             Current Load
+        check_command                   check_nrpe!check_load
+}
+
+define service {
+        use                             generic-service
+        host_name                       Server01
+        service_description             Current Users
+        check_command                   check_nrpe!check_users
+}
+
+define service{
+        use				generic-service
+        host_name			Server01
+        service_description		Check Memory
+        check_command			check_nrpe!check_mem
+}
+
+define service {
+        use                             generic-service
+        host_name                       Server01
+        service_description             Root Partition
+        check_command                   check_nrpe!check_sda1
+}
+
+define service {
+        use                             generic-service
+        host_name                       Server01
+        service_description             SQL Partition
+        check_command                   check_nrpe!check_var_lib_mysql
+}
+
+define service{
+        use                             generic-service
+        host_name                       Server01
+        service_description             Apache Response Time
+        check_command                   check_http
+        }
+
+define service {
+        use                             generic-service
+        host_name                       Server01
+        service_description             Total Processes
+        check_command                   check_nrpe!check_total_procs
+}

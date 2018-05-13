@@ -1,0 +1,10 @@
+---
+- name: Restart Apache
+  service: name=apache2 state=restarted
+
+- name: Restart Postfix
+  command: /etc/init.d/postfix restart
+#  service: name=postfix state=started
+  
+- name: Restart Nagios
+  command: /etc/init.d/nagios restart
